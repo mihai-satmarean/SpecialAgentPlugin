@@ -76,7 +76,7 @@ namespace
 		{ TEXT("lidar_point_cloud"), TEXT("bUsedWithLidarPointCloud"), MATUSAGE_LidarPointCloud },
 		{ TEXT("virtual_heightfield_mesh"), TEXT("bUsedWithVirtualHeightfieldMesh"), MATUSAGE_VirtualHeightfieldMesh },
 		{ TEXT("nanite"), TEXT("bUsedWithNanite"), MATUSAGE_Nanite },
-		{ TEXT("voxels"), TEXT("bUsedWithVoxels"), MATUSAGE_Voxels },
+		// MATUSAGE_Voxels is UE 5.7+ only
 		{ TEXT("volumetric_cloud"), TEXT("bUsedWithVolumetricCloud"), MATUSAGE_VolumetricCloud },
 		{ TEXT("heterogeneous_volumes"), TEXT("bUsedWithHeterogeneousVolumes"), MATUSAGE_HeterogeneousVolumes },
 		{ TEXT("static_mesh"), TEXT("bUsedWithStaticMesh"), MATUSAGE_StaticMesh },
@@ -419,11 +419,7 @@ namespace
 			{ static_cast<uint64>(MCT_TextureCollection), TEXT("texture_collection") },
 			{ static_cast<uint64>(MCT_TextureMeshPaint), TEXT("texture_mesh_paint") },
 			{ static_cast<uint64>(MCT_TextureMaterialCache), TEXT("texture_material_cache") },
-			{ static_cast<uint64>(MCT_Float3x3), TEXT("float3x3") },
-			{ static_cast<uint64>(MCT_Float4x4), TEXT("float4x4") },
-			{ static_cast<uint64>(MCT_LWCMatrix), TEXT("lwc_matrix") },
-			{ static_cast<uint64>(MCT_MaterialCacheABuffer), TEXT("material_cache_abuffer") },
-			{ static_cast<uint64>(MCT_Unexposed), TEXT("unexposed") },
+			// MCT_Float3x3, MCT_Float4x4, MCT_LWCMatrix, MCT_MaterialCacheABuffer, MCT_Unexposed are UE 5.7+ only
 		};
 
 		if (TypeMask == 0)
@@ -432,8 +428,9 @@ namespace
 		}
 
 		TArray<FString> SetFlags;
-		for (const FTypeName& TypeName : TypeNames)
+		for (int32 Idx = 0; Idx < UE_ARRAY_COUNT(TypeNames); ++Idx)
 		{
+			const FTypeName& TypeName = TypeNames[Idx];
 			if ((TypeMask & TypeName.Mask) != 0)
 			{
 				SetFlags.Add(TypeName.Name);
@@ -2474,8 +2471,8 @@ namespace
 		InputObject->SetStringField(TEXT("description"), InputExpression->Description);
 		InputObject->SetNumberField(TEXT("sort_priority"), InputExpression->SortPriority);
 		InputObject->SetStringField(TEXT("input_type"), FunctionInputTypeToString(InputExpression->InputType));
-		InputObject->SetStringField(TEXT("input_type_display_name"), UMaterialExpressionFunctionInput::GetInputTypeDisplayName(InputExpression->InputType));
-		InputObject->SetStringField(TEXT("material_value_type"), MaterialValueTypeToString(UMaterialExpressionFunctionInput::GetMaterialTypeFromInputType(InputExpression->InputType)));
+		InputObject->SetStringField(TEXT("input_type_display_name"), FunctionInputTypeToString(InputExpression->InputType));
+		InputObject->SetStringField(TEXT("material_value_type"), FunctionInputTypeToString(InputExpression->InputType));
 		InputObject->SetBoolField(TEXT("use_preview_value_as_default"), InputExpression->bUsePreviewValueAsDefault != 0);
 		InputObject->SetStringField(TEXT("id"), InputExpression->Id.IsValid() ? InputExpression->Id.ToString(EGuidFormats::DigitsWithHyphens) : FString());
 		InputObject->SetObjectField(TEXT("preview_value"), BuildColorJson(FLinearColor(
@@ -2788,7 +2785,7 @@ namespace
 		while (Current)
 		{
 			OutHierarchy.Insert(Current, 0);
-			Current = Current->GetBaseParameterCollection();
+			Current = nullptr; // GetBaseParameterCollection() is UE 5.7+ only
 		}
 	}
 
@@ -8506,8 +8503,8 @@ FMCPResponse FMaterialService::HandleMaterialCollectionGetInfo(const FMCPRequest
 		Result->SetBoolField(TEXT("success"), true);
 		Result->SetStringField(TEXT("parameter_collection_path"), CollectionAssetPath);
 		Result->SetStringField(TEXT("asset_class"), Collection->GetClass()->GetPathName());
-		Result->SetBoolField(TEXT("has_base_collection"), Collection->GetBaseParameterCollection() != nullptr);
-		Result->SetStringField(TEXT("base_collection_path"), Collection->GetBaseParameterCollection() ? NormalizeAssetPath(Collection->GetBaseParameterCollection()->GetPathName()) : FString());
+		Result->SetBoolField(TEXT("has_base_collection"), false); // GetBaseParameterCollection() is UE 5.7+ only
+		Result->SetStringField(TEXT("base_collection_path"), FString());
 		Result->SetStringField(TEXT("state_id"), Collection->StateId.IsValid() ? Collection->StateId.ToString(EGuidFormats::DigitsWithHyphens) : FString());
 		Result->SetNumberField(TEXT("scalar_parameter_count"), DirectScalarCount);
 		Result->SetNumberField(TEXT("vector_parameter_count"), DirectVectorCount);
@@ -10608,8 +10605,8 @@ FMCPResponse FMaterialService::HandleGetMaterialStatus(const FMCPRequest& Reques
 			Result->SetStringField(TEXT("state_id"), Collection->StateId.IsValid() ? Collection->StateId.ToString(EGuidFormats::DigitsWithHyphens) : FString());
 			Result->SetNumberField(TEXT("scalar_parameter_count"), Collection->ScalarParameters.Num());
 			Result->SetNumberField(TEXT("vector_parameter_count"), Collection->VectorParameters.Num());
-			Result->SetBoolField(TEXT("has_base_collection"), Collection->GetBaseParameterCollection() != nullptr);
-			Result->SetStringField(TEXT("base_collection_path"), Collection->GetBaseParameterCollection() ? NormalizeAssetPath(Collection->GetBaseParameterCollection()->GetPathName()) : FString());
+			Result->SetBoolField(TEXT("has_base_collection"), false); // GetBaseParameterCollection() is UE 5.7+ only
+			Result->SetStringField(TEXT("base_collection_path"), FString());
 			return Result;
 		}
 

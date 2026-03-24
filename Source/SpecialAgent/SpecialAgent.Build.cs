@@ -63,6 +63,8 @@ public class SpecialAgent : ModuleRules
 				"BlueprintEditorLibrary",
 				"MaterialEditor",
 				"AssetTools",
+				"KismetCompiler",
+				"Kismet",
 			}
 		);
 		
