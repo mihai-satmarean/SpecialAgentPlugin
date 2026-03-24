@@ -7,6 +7,8 @@
 #include "BlueprintEditorLibrary.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
+#include "Engine/Level.h"
+#include "Engine/LevelScriptBlueprint.h"
 #include "UnrealEdGlobals.h"
 #include "Editor/UnrealEdEngine.h"
 #include "Editor/Transactor.h"
@@ -62,6 +64,19 @@ namespace
 		NodeObj->SetNumberField(TEXT("x"), Node->NodePosX);
 		NodeObj->SetNumberField(TEXT("y"), Node->NodePosY);
 
+		if (const UK2Node_CallFunction* CF = Cast<UK2Node_CallFunction>(Node))
+		{
+			NodeObj->SetStringField(TEXT("function_name"), CF->FunctionReference.GetMemberName().ToString());
+			if (UClass* ParentClass = CF->FunctionReference.GetMemberParentClass())
+			{
+				NodeObj->SetStringField(TEXT("function_class"), ParentClass->GetName());
+			}
+		}
+		if (const UK2Node_CustomEvent* CE = Cast<UK2Node_CustomEvent>(Node))
+		{
+			NodeObj->SetStringField(TEXT("custom_event_name"), CE->CustomFunctionName.ToString());
+		}
+
 		TArray<TSharedPtr<FJsonValue>> PinsJson;
 		for (const UEdGraphPin* Pin : Node->Pins)
 		{
@@ -74,6 +89,7 @@ namespace
 			PinObj->SetStringField(TEXT("name"), Pin->PinName.ToString());
 			PinObj->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
 			PinObj->SetStringField(TEXT("category"), Pin->PinType.PinCategory.ToString());
+			PinObj->SetStringField(TEXT("default_value"), Pin->GetDefaultAsString());
 			if (Pin->PinType.PinSubCategory != NAME_None)
 			{
 				PinObj->SetStringField(TEXT("subcategory"), Pin->PinType.PinSubCategory.ToString());
@@ -82,6 +98,22 @@ namespace
 			{
 				PinObj->SetStringField(TEXT("subcategory_object"), Pin->PinType.PinSubCategoryObject->GetPathName());
 			}
+
+			TArray<TSharedPtr<FJsonValue>> LinkedToJson;
+			for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+			{
+				if (!LinkedPin || !LinkedPin->GetOwningNodeUnchecked())
+				{
+					continue;
+				}
+				const UEdGraphNode* LinkedNode = LinkedPin->GetOwningNodeUnchecked();
+				TSharedPtr<FJsonObject> LinkObj = MakeShared<FJsonObject>();
+				LinkObj->SetStringField(TEXT("node_id"), LinkedNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+				LinkObj->SetStringField(TEXT("pin_name"), LinkedPin->PinName.ToString());
+				LinkedToJson.Add(MakeShared<FJsonValueObject>(LinkObj));
+			}
+			PinObj->SetArrayField(TEXT("linked_to"), LinkedToJson);
+
 			PinsJson.Add(MakeShared<FJsonValueObject>(PinObj));
 		}
 
@@ -3014,11 +3046,11 @@ TArray<FMCPToolInfo> FBlueprintService::GetAvailableTools() const
 	{
 		FMCPToolInfo Tool;
 		Tool.Name = TEXT("list_graph_nodes");
-		Tool.Description = TEXT("List graph nodes and pins for a Blueprint graph. Use returned node_id values with connect_pins.");
+		Tool.Description = TEXT("List all graph nodes with pins, connections, and default values. Use '__level__' as blueprint_path for the current Level Blueprint. Returns node_id, function_name, custom_event_name, pin linked_to arrays.");
 
 		TSharedPtr<FJsonObject> PathParam = MakeShared<FJsonObject>();
 		PathParam->SetStringField(TEXT("type"), TEXT("string"));
-		PathParam->SetStringField(TEXT("description"), TEXT("Blueprint asset path (e.g. /Game/Blueprints/BP_MyActor)."));
+		PathParam->SetStringField(TEXT("description"), TEXT("Blueprint asset path (e.g. /Game/Blueprints/BP_MyActor) or '__level__' for the current Level Blueprint."));
 		Tool.Parameters->SetObjectField(TEXT("blueprint_path"), PathParam);
 
 		TSharedPtr<FJsonObject> GraphParam = MakeShared<FJsonObject>();
@@ -7672,11 +7704,35 @@ FMCPResponse FBlueprintService::HandleListGraphNodes(const FMCPRequest& Request)
 	FString GraphName = TEXT("EventGraph");
 	Request.Params->TryGetStringField(TEXT("graph_name"), GraphName);
 
-	auto Task = [BlueprintPath, GraphName]() -> TSharedPtr<FJsonObject>
+	const bool bIsLevelBP = BlueprintPath.Equals(TEXT("__level__"), ESearchCase::IgnoreCase);
+
+	auto Task = [BlueprintPath, GraphName, bIsLevelBP]() -> TSharedPtr<FJsonObject>
 	{
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
-		UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+		UBlueprint* Blueprint = nullptr;
+		if (bIsLevelBP)
+		{
+			if (!GEditor)
+			{
+				Result->SetBoolField(TEXT("success"), false);
+				Result->SetStringField(TEXT("error"), TEXT("GEditor is null"));
+				return Result;
+			}
+			UWorld* EdWorld = GEditor->GetEditorWorldContext().World();
+			if (!EdWorld || !EdWorld->PersistentLevel)
+			{
+				Result->SetBoolField(TEXT("success"), false);
+				Result->SetStringField(TEXT("error"), TEXT("No editor world or persistent level"));
+				return Result;
+			}
+			Blueprint = EdWorld->PersistentLevel->GetLevelScriptBlueprint(false);
+		}
+		else
+		{
+			Blueprint = LoadBlueprint(BlueprintPath);
+		}
+
 		if (!Blueprint)
 		{
 			Result->SetBoolField(TEXT("success"), false);
@@ -7684,7 +7740,24 @@ FMCPResponse FBlueprintService::HandleListGraphNodes(const FMCPRequest& Request)
 			return Result;
 		}
 
-		UEdGraph* Graph = ResolveGraph(Blueprint, GraphName);
+		UEdGraph* Graph = nullptr;
+		if (bIsLevelBP)
+		{
+			for (TObjectIterator<UEdGraph> It; It; ++It)
+			{
+				UEdGraph* G = *It;
+				if (G && G->IsIn(Blueprint) && G->GetName() == GraphName)
+				{
+					Graph = G;
+					break;
+				}
+			}
+		}
+		else
+		{
+			Graph = ResolveGraph(Blueprint, GraphName);
+		}
+
 		if (!Graph)
 		{
 			Result->SetBoolField(TEXT("success"), false);
@@ -7703,7 +7776,7 @@ FMCPResponse FBlueprintService::HandleListGraphNodes(const FMCPRequest& Request)
 		}
 
 		Result->SetBoolField(TEXT("success"), true);
-		Result->SetStringField(TEXT("blueprint_path"), NormalizeBlueprintPath(BlueprintPath));
+		Result->SetStringField(TEXT("blueprint_path"), bIsLevelBP ? TEXT("__level__") : NormalizeBlueprintPath(BlueprintPath));
 		Result->SetStringField(TEXT("graph_name"), Graph->GetName());
 		Result->SetArrayField(TEXT("nodes"), NodesJson);
 		Result->SetNumberField(TEXT("count"), NodesJson.Num());
